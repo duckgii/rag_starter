@@ -13,12 +13,30 @@ cites the sections it actually used. A hard iteration cap stops it from looping
 when the corpus simply doesn't contain the answer.
 """
 import re
+import time
 
 from indexer import cosine_distance, embed, find_section_refs, load_sections
 
 MODEL = "claude-sonnet-4-6"
+ROUTER_MODEL = "claude-haiku-4-5"  # cheap model that routes a question by complexity
 MAX_ITERS = 6
 MAX_SECTION_CHARS = 18000  # cap a single section's text fed back to the model
+
+# Adaptive-RAG: route each question to a retrieval budget matching its complexity,
+# instead of always paying for the full agentic loop.
+#   A — answer directly, no retrieval         (greetings, out-of-scope questions)
+#   B — single-section lookup, no follow_refs  (a specific fact in one section)
+#   C — full agentic loop with follow_refs     (multi-section / cross-referential)
+TIER_BUDGET = {
+    "A": {"max_iters": 0, "follow_refs": False},
+    "B": {"max_iters": 2, "follow_refs": False},
+    "C": {"max_iters": MAX_ITERS, "follow_refs": True},
+}
+TIER_LABEL = {
+    "A": "💬 Answering directly (no retrieval)",
+    "B": "📗 Single-section lookup",
+    "C": "📚 Multi-section retrieval",
+}
 
 # Lazily loaded so importing this module (and starting the server) stays fast.
 _SECTIONS: list[dict] | None = None
@@ -144,6 +162,61 @@ Format the answer in clean Markdown: headings, **bold** key terms, and bullet \
 or numbered lists for enumerated requirements."""
 
 
+# Routes a question into one Adaptive-RAG tier. Kept tiny so the routing call is
+# cheap — it returns a single letter, nothing else.
+ROUTER_SYSTEM = """You route questions for a Q&A system over U.S. aviation \
+regulations (14 CFR). Classify the user's question into ONE complexity tier and \
+reply with only that single letter.
+
+A — No retrieval needed: greetings, small talk, questions about you, or anything \
+clearly outside U.S. aviation regulations.
+B — Single-section lookup: a specific fact answerable from one regulation section \
+(an age, a number, a single requirement) with no need to chase cross-references.
+C — Multi-section or cross-referential: the answer likely spans several sections \
+or depends on sections that another section points to.
+
+Reply with exactly one character: A, B, or C."""
+
+
+# Used by tier A, where no regulation lookup is required.
+DIRECT_SYSTEM = """You are the assistant for a tool that answers questions about \
+U.S. aviation regulations (14 CFR) with citations. The user's message does not \
+require looking anything up. Respond briefly and directly: greet them and explain \
+what you do if they're saying hello, or politely note that a question is outside \
+U.S. aviation regulations if it is."""
+
+
+def classify(question: str, client) -> tuple[str, object]:
+    """Cheaply route a question to a complexity tier. Returns (tier, usage)."""
+    resp = client.messages.create(
+        model=ROUTER_MODEL,
+        max_tokens=5,
+        system=ROUTER_SYSTEM,
+        messages=[{"role": "user", "content": question}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").upper()
+    tier = next((c for c in text if c in "ABC"), "C")  # default to the safe full path
+    return tier, resp.usage
+
+
+def _cache_last(messages: list[dict]) -> None:
+    """Move a single cache breakpoint onto the most recent tool-result message.
+
+    Each ReAct iteration resends the whole history (every section already read),
+    so caching the prefix turns that repeated context into cheap cache reads
+    instead of re-billed input tokens.
+    """
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    block.pop("cache_control", None)
+    last = messages[-1].get("content")
+    if isinstance(last, list) and last and isinstance(last[-1], dict):
+        last[-1]["cache_control"] = {"type": "ephemeral"}
+
+
 def _status(tool_use) -> str:
     name, inp = tool_use.name, tool_use.input
     if name == "navigate_toc":
@@ -155,9 +228,20 @@ def _status(tool_use) -> str:
     return f"… {name}"
 
 
-def _chunked(text: str, size: int = 60):
-    for i in range(0, len(text), size):
-        yield text[i:i + size]
+def _stream_turn(client, **kwargs):
+    """Stream one model turn, yielding text deltas live as they arrive.
+
+    Used as `resp = yield from _stream_turn(...)`: every text delta is forwarded
+    to the caller in real time, and the assembled final message (content, usage,
+    stop_reason) is returned once the stream completes.
+    """
+    with client.messages.stream(**kwargs) as stream:
+        for event in stream:
+            if (event.type == "content_block_delta"
+                    and getattr(event.delta, "type", None) == "text_delta"):
+                yield {"type": "delta", "text": event.delta.text}
+        final = stream.get_final_message()
+    return final
 
 
 def run(question: str, client):
@@ -226,37 +310,120 @@ def run(question: str, client):
             })
         return out
 
-    messages: list[dict] = [{"role": "user", "content": question}]
-    for _ in range(MAX_ITERS):
-        resp = client.messages.create(
+    # ── Adaptive-RAG: route the question, then spend only its tier's budget ──
+    yield {"type": "status", "text": "🧭 Routing the question…"}
+    tier, ru = classify(question, client)
+    budget = TIER_BUDGET[tier]
+
+    # Running totals across every model call (router + answer), including the
+    # cache reads/writes that prompt caching produces — surfaced so the UI can
+    # show how much context was served from cache rather than re-billed.
+    total_in = ru.input_tokens
+    total_out = ru.output_tokens
+    total_cr = getattr(ru, "cache_read_input_tokens", 0) or 0
+    total_cw = getattr(ru, "cache_creation_input_tokens", 0) or 0
+
+    def usage_event(step) -> dict:
+        return {
+            "type": "usage",
+            "total_input": total_in,
+            "total_output": total_out,
+            "total_cache_read": total_cr,
+            "total_cache_write": total_cw,
+            "step_input": step.input_tokens,
+            "step_output": step.output_tokens,
+        }
+
+    def done_usage() -> dict:
+        return {"total_input": total_in, "total_output": total_out,
+                "total_cache_read": total_cr, "total_cache_write": total_cw}
+
+    def add_usage(u) -> None:
+        nonlocal total_in, total_out, total_cr, total_cw
+        total_in += u.input_tokens
+        total_out += u.output_tokens
+        total_cr += getattr(u, "cache_read_input_tokens", 0) or 0
+        total_cw += getattr(u, "cache_creation_input_tokens", 0) or 0
+
+    yield {"type": "tier", "tier": tier, "label": TIER_LABEL[tier]}
+    yield usage_event(ru)
+
+    # Tier A — no retrieval. One direct, tool-free answer, streamed live.
+    if budget["max_iters"] == 0:
+        yield {"type": "status", "text": "✍️ Writing answer…"}
+        resp = yield from _stream_turn(
+            client,
             model=MODEL,
             max_tokens=2000,
-            system=SYSTEM,
-            tools=TOOLS,
+            system=[{"type": "text", "text": DIRECT_SYSTEM,
+                     "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": question}],
+        )
+        add_usage(resp.usage)
+        yield usage_event(resp.usage)
+        yield {"type": "done", "citations": [], "usage": done_usage()}
+        return
+
+    # Tiers B / C — agentic retrieval. Tier B drops follow_refs and caps the loop.
+    tools = [t for t in TOOLS if budget["follow_refs"] or t["name"] != "follow_refs"]
+    messages: list[dict] = [{"role": "user", "content": question}]
+    for step in range(1, budget["max_iters"] + 1):
+        _cache_last(messages)  # cache the (growing) section context across iterations
+        yield {"type": "status", "text": f"🤔 Thinking… (step {step})"}
+        resp = yield from _stream_turn(
+            client,
+            model=MODEL,
+            max_tokens=2000,
+            system=[{"type": "text", "text": SYSTEM,
+                     "cache_control": {"type": "ephemeral"}}],
+            tools=tools,
             messages=messages,
         )
+        add_usage(resp.usage)
+        yield usage_event(resp.usage)
         messages.append({"role": "assistant", "content": resp.content})
 
         if resp.stop_reason != "tool_use":
+            # The final answer already streamed live above; just finalize.
             answer = "".join(b.text for b in resp.content if b.type == "text")
-            for piece in _chunked(answer):
-                yield {"type": "delta", "text": piece}
-            yield {"type": "done", "citations": citations(answer)}
+            yield {"type": "done", "citations": citations(answer),
+                   "usage": done_usage()}
             return
+
+        # This turn ends in a tool call, so any text streamed above was the
+        # model's preamble, not the answer — tell the UI to drop it.
+        yield {"type": "reset_answer"}
 
         results = []
         for block in resp.content:
             if block.type != "tool_use":
                 continue
             yield {"type": "status", "text": _status(block)}
+            t0 = time.perf_counter()
+            content = run_tool(block.name, block.input)
+            duration_ms = round((time.perf_counter() - t0) * 1000)
+            # The tool result becomes context on the next call; ~4 chars/token
+            # is a good rough estimate of how much it adds.
+            result_tokens = round(len(content) / 4)
+            # Persistent per-tool record: which tool, its arg, latency, and how
+            # much context it produced.
+            yield {
+                "type": "tool",
+                "name": block.name,
+                "label": _status(block),
+                "input": block.input,
+                "duration_ms": duration_ms,
+                "result_chars": len(content),
+                "result_tokens": result_tokens,
+            }
             results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
-                "content": run_tool(block.name, block.input),
+                "content": content,
             })
         messages.append({"role": "user", "content": results})
 
     msg = ("I couldn't find enough in the corpus to answer confidently within the "
            "search budget.")
     yield {"type": "delta", "text": msg}
-    yield {"type": "done", "citations": citations(msg)}
+    yield {"type": "done", "citations": citations(msg), "usage": done_usage()}

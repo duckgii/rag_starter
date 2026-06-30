@@ -34,7 +34,7 @@ DOCS_DIR = Path(__file__).parent / "documents"
 # ════════════════════════════════════════════════════════════════
 
 def chunk_text(text: str, target_chars: int = 1000, overlap_chars: int = 200) -> list[str]:
-    """Split text into overlapping chunks, preferring paragraph boundaries.
+    """Split text into overlapping chunks, preferring paragraph boundaries.조
 
     Greedily packs paragraphs (split on blank lines) into chunks of up to
     ~target_chars. Each chunk carries ~overlap_chars of trailing context from

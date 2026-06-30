@@ -1,0 +1,128 @@
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+.app {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 1rem;
+}
+
+h1 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.messages {
+  min-height: 200px;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #e5e5ea;
+}
+
+.msg {
+  padding: 0.5rem 0;
+  line-height: 1.5;
+  border-bottom: 1px solid #f0f0f3;
+}
+.msg:last-child { border-bottom: none; }
+.msg-user .msg-body b { color: #333; }
+.msg-assistant .msg-body b { color: #0066cc; }
+
+/* Render the assistant's Markdown without runaway vertical spacing. */
+.markdown { display: inline-block; width: 100%; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 0.4rem 0; }
+.markdown ul, .markdown ol { margin: 0.4rem 0; padding-left: 1.4rem; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 0.6rem 0 0.3rem; line-height: 1.25; }
+.markdown code {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.9em;
+  background: #f0f0f3;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.markdown pre {
+  background: #f0f0f3;
+  padding: 0.7rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown pre code { background: none; padding: 0; }
+
+.sources {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: #666;
+}
+.sources-label {
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  margin-bottom: 0.3rem;
+}
+.source {
+  border: 1px solid #e5e5ea;
+  border-radius: 6px;
+  margin-bottom: 0.35rem;
+  background: #fafafa;
+}
+.source > summary {
+  cursor: pointer;
+  padding: 0.4rem 0.6rem;
+  font-family: ui-monospace, Menlo, monospace;
+  list-style: none;
+  user-select: none;
+}
+.source > summary::-webkit-details-marker { display: none; }
+.source > summary::before { content: '▸ '; color: #999; }
+.source[open] > summary::before { content: '▾ '; }
+.source-tag { color: #0066cc; font-weight: 600; }
+.source-chunk { color: #aaa; margin-left: 0.4rem; }
+.source-text {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-top: 1px solid #e5e5ea;
+  border-left: 3px solid #0066cc;
+  background: white;
+  font-family: system-ui, sans-serif;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  color: #333;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+input {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  font-size: 1rem;
+  border: 1px solid #d1d1d6;
+  border-radius: 6px;
+  outline: none;
+}
+input:focus { border-color: #0066cc; }
+
+button {
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  border: 0;
+  background: #0066cc;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:hover { background: #0055aa; }

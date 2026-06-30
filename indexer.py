@@ -7,6 +7,7 @@ TODO: implement chunk_text(). The embedding and storage code is provided so
 you can focus on the structure.
 """
 import pickle
+import re
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -16,6 +17,7 @@ from sentence_transformers import SentenceTransformer
 # Lets the corpus and the queries be in different languages and still match.
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 INDEX_PATH = Path(__file__).parent / "index.pkl"
+SECTIONS_PATH = Path(__file__).parent / "sections.pkl"
 DOCS_DIR = Path(__file__).parent / "documents"
 
 
@@ -152,6 +154,107 @@ def load_index() -> list[dict]:
         return pickle.load(f)
 
 
+# ════════════════════════════════════════════════════════════════
+# Section index — structure-aware retrieval for the agentic retriever
+#
+# CFR documents have a strong hierarchy: each section ("§ 61.109
+# Aeronautical experience.") is a self-contained unit. Indexing whole
+# sections (instead of fixed-size chunks) lets the agent read a complete
+# regulation and follow the cross-references it cites — which fixed
+# chunking can't do, because a section's answer is split across chunks
+# and its references point elsewhere in the corpus.
+# ════════════════════════════════════════════════════════════════
+
+# A real section header in the body, e.g. "§ 61.109 Aeronautical experience."
+# Captures (number, title). Rejects cross-references like "§ 61.107(b)" or
+# "§ 61.110 of this part" by requiring a capitalized title word (not a
+# connective) right after the number, with the title ending the line.
+_SECTION_HEADER = re.compile(
+    r"§\s*(\d{1,3}\.\d+[a-z]?)\s+"
+    r"(?!of\b|in\b|and\b|or\b|through\b)"
+    r"([A-Z][A-Za-z][^§]{1,90}?[.:])"
+    r"(?=\s*\n)"
+)
+
+# A cross-reference to another section anywhere in a body, e.g. "§ 61.107(b)(1)".
+_SECTION_REF = re.compile(r"§+\s*(\d{1,3}\.\d+[a-z]?)")
+
+
+def split_sections(text: str) -> list[tuple[str, str, str]]:
+    """Split a document into (section_id, title, body) tuples at § headers.
+
+    The first occurrence of each section number is treated as its real header
+    (later repeats are page running-heads); the body runs to the next header.
+    """
+    heads: list[tuple[int, str, str]] = []
+    seen: set[str] = set()
+    for m in _SECTION_HEADER.finditer(text):
+        sid = m.group(1)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        title = " ".join(m.group(2).rstrip(".:").split())
+        heads.append((m.start(), sid, title))
+
+    out: list[tuple[str, str, str]] = []
+    for i, (start, sid, title) in enumerate(heads):
+        end = heads[i + 1][0] if i + 1 < len(heads) else len(text)
+        out.append((sid, title, text[start:end].strip()))
+    return out
+
+
+def find_section_refs(body: str, self_id: str) -> list[str]:
+    """Ordered-unique section numbers cited inside `body`, excluding itself."""
+    refs: list[str] = []
+    for rid in dict.fromkeys(_SECTION_REF.findall(body)):
+        if rid != self_id and rid not in refs:
+            refs.append(rid)
+    return refs
+
+
+def build_sections() -> list[dict]:
+    """Walk DOCS_DIR, split each doc into sections, embed each for navigation."""
+    sections: list[dict] = []
+    seen_ids: set[str] = set()
+    for path in sorted(DOCS_DIR.glob("*")):
+        if path.is_dir() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        text = read_document(path)
+        secs = [s for s in split_sections(text) if s[0] not in seen_ids]
+        if not secs:
+            continue
+        # Embed "title + opening lines" so navigate_toc ranks on the heading and
+        # the section's first lines (which usually state who/what it applies to).
+        nav_text = [f"{title}\n{body[:500]}" for _, title, body in secs]
+        vectors = embed(nav_text)
+        for (sid, title, body), vec in zip(secs, vectors):
+            seen_ids.add(sid)
+            sections.append({
+                "section_id": sid,
+                "part": sid.split(".")[0],
+                "source": path.name,
+                "title": title,
+                "text": body,
+                "embedding": vec,
+            })
+        print(f"  {path.name}: {len(secs)} sections")
+    return sections
+
+
+def save_sections(sections: list[dict]) -> None:
+    with SECTIONS_PATH.open("wb") as f:
+        pickle.dump(sections, f)
+
+
+def load_sections() -> list[dict]:
+    if not SECTIONS_PATH.exists():
+        raise FileNotFoundError(
+            f"No section index at {SECTIONS_PATH}. Run `python indexer.py` first."
+        )
+    with SECTIONS_PATH.open("rb") as f:
+        return pickle.load(f)
+
+
 def cosine_distance(a: list[float], b: list[float]) -> float:
     # Both vectors are unit-normalized, so cosine distance == 1 - dot product.
     return 1.0 - sum(x * y for x, y in zip(a, b))
@@ -173,6 +276,11 @@ def main() -> None:
     records = build_index()
     save_index(records)
     print(f"\n✓ Indexed {len(records)} chunks → {INDEX_PATH.name}")
+
+    print("\nBuilding section index (for the agentic retriever)...")
+    sections = build_sections()
+    save_sections(sections)
+    print(f"✓ Indexed {len(sections)} sections → {SECTIONS_PATH.name}")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ export default function App() {
     setInput('')
 
     // Add an empty assistant message; we fill it in as tokens stream in.
-    setMessages((m) => [...m, { role: 'assistant', text: '', citations: [] }])
+    setMessages((m) => [...m, { role: 'assistant', text: '', citations: [], status: '' }])
 
     const updateLast = (patch) =>
       setMessages((m) => {
@@ -48,10 +48,13 @@ export default function App() {
         const line = frame.split('\n').find((l) => l.startsWith('data:'))
         if (!line) continue
         const payload = JSON.parse(line.slice(5).trim())
-        if (payload.type === 'delta') {
-          updateLast((last) => ({ text: last.text + payload.text }))
+        if (payload.type === 'status') {
+          // Transient progress line while the agent runs its retrieval tools.
+          updateLast(() => ({ status: payload.text }))
+        } else if (payload.type === 'delta') {
+          updateLast((last) => ({ text: last.text + payload.text, status: '' }))
         } else if (payload.type === 'done') {
-          updateLast(() => ({ citations: payload.citations || [] }))
+          updateLast(() => ({ citations: payload.citations || [], status: '' }))
         }
       }
     }
@@ -69,6 +72,9 @@ export default function App() {
                 ? <div className="markdown"><ReactMarkdown>{m.text}</ReactMarkdown></div>
                 : m.text}
             </div>
+            {m.status && (
+              <div className="status">{m.status}</div>
+            )}
             {m.citations && m.citations.length > 0 && (
               <div className="sources">
                 <div className="sources-label">Sources</div>

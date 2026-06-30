@@ -61,6 +61,12 @@ h1 {
   font-size: 0.85rem;
   color: #666;
 }
+.status {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: #888;
+  font-style: italic;
+}
 .sources-label {
   font-weight: 600;
   color: #888;

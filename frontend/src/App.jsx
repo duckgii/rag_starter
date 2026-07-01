@@ -90,6 +90,21 @@ function formatCitation(raw) {
     .filter(Boolean)
 }
 
+// Assemble the full answer as copy-ready Markdown: the answer body (which
+// already carries [n] citation markers) followed by a Sources section listing
+// each cited section as a labeled blockquote.
+function answerToMarkdown(m) {
+  let md = (m.text || '').trim()
+  if (m.citations && m.citations.length > 0) {
+    md += '\n\n---\n\n## Sources\n'
+    for (const c of m.citations) {
+      const quoted = formatCitation(c.text).map((p) => `> ${p}`).join('\n>\n')
+      md += `\n**[${c.n}] ${c.chunk_index}** · ${c.source}\n\n${quoted}\n`
+    }
+  }
+  return md
+}
+
 // ── Sub-components ───────────────────────────────────────────────
 
 function WorkingBanner({ text }) {
@@ -331,7 +346,7 @@ export default function App() {
               {m.citations && m.citations.length > 0 && <Sources citations={m.citations} idx={i} />}
 
               {m.role === 'assistant' && m.text && !m.status && (
-                <button className="copy-btn" onClick={() => navigator.clipboard?.writeText(m.text)}>
+                <button className="copy-btn" onClick={() => navigator.clipboard?.writeText(answerToMarkdown(m))}>
                   Copy answer
                 </button>
               )}

@@ -197,15 +197,11 @@ factual claim with that bracketed number (e.g. "40 hours [3]"). Never invent a \
 number or cite a section you only saw in navigate_toc or follow_refs.
 
 Write clean Markdown for a reader who may not know the jargon:
-- Define every abbreviation or term of art — including citation abbreviations \
-like CFR — on FIRST use only, always in one uniform format: the ABBREVIATION \
-first, its expansion in parentheses — e.g. "14 CFR (Code of Federal \
-Regulations)", "VFR (visual flight rules)", "PIC (pilot in command)", "nm \
-(nautical mile, about 1.15 statute miles)". After that first mention, use the \
-abbreviation alone — don't re-expand it. Keep the abbreviation-first order \
-even when spelling the term out first would read more naturally: write "FFS \
-(full flight simulator)", never "full flight simulator (FFS)". (For a term of \
-art with no abbreviation, just gloss it in parentheses on first use.)
+- Define each abbreviation or term of art — including citation ones like CFR — \
+on first use only, then use the short form. Format as abbreviation-then-\
+expansion, never reversed: "14 CFR (Code of Federal Regulations)", "FFS (full \
+flight simulator)" — not "full flight simulator (FFS)". A term with no \
+abbreviation: gloss it in parentheses.
 - Match the structure to the question: answer a single-fact question in a \
 sentence or two; use a bulleted or numbered list for enumerated requirements; \
 use a table only to compare two or more things. Don't force headings onto a \

@@ -21,6 +21,11 @@ MODEL = "claude-sonnet-4-6"
 ROUTER_MODEL = "claude-haiku-4-5"  # cheap model that routes a question by complexity
 MAX_ITERS = 6
 MAX_SECTION_CHARS = 18000  # cap a single section's text fed back to the model
+# navigate_toc expands into a whole numbering block only when the block is this
+# small. Small blocks (e.g. Part 67's 8-section §67.1xx first-class standards)
+# are tight repeated-standard runs worth pulling in whole; big ones (e.g. Part
+# 91's ~48 §91.1xx sections) are not, and must not be swept in wholesale.
+TOC_EXPAND_GROUP_MAX = 14
 
 # Adaptive-RAG: route each question to a retrieval budget matching its complexity,
 # instead of always paying for the full agentic loop.
@@ -53,11 +58,53 @@ def _load():
 
 # ── Tool implementations ────────────────────────────────────────────
 
+def _group_key(section_id: str) -> str:
+    """Coarse subpart bucket from the section number, e.g. '67.103' -> '67.1'.
+
+    CFR numbering encodes structure: Part 67's medical standards repeat block by
+    block — §67.1xx (first-class), §67.2xx (second), §67.3xx (third), each an
+    identical run of Eye/Ear/Mental/… sections. The hundreds digit separates
+    those blocks, so it's a cheap proxy for "same subpart".
+    """
+    part, _, rest = section_id.partition(".")
+    m = re.match(r"\d+", rest)
+    return f"{part}.{int(m.group()) // 100}" if m else section_id
+
+
+def _sort_key(section_id: str) -> list[int]:
+    return [int(n) for n in re.findall(r"\d+", section_id)]
+
+
 def navigate_toc(query: str, k: int = 6) -> list[dict]:
-    """Rank sections by similarity of (title + opening) to the query."""
+    """Rank sections by (title + opening) similarity to the query.
+
+    When the closest hits cluster inside one small numbering block, the answer
+    is usually the whole block (e.g. "which conditions disqualify a first-class
+    medical certificate" == every §67.1xx standard). A plain top-k buries most
+    of that block behind near-identical decoys from the sibling blocks
+    (§67.2xx/§67.3xx), so we pull the entire dominant block into the candidate
+    list — recall goes up and the off-block decoys drop out.
+    """
     sections, _ = _load()
     [qv] = embed([query])
-    ranked = sorted(sections, key=lambda s: cosine_distance(s["embedding"], qv))[:k]
+    ranked = sorted(sections, key=lambda s: cosine_distance(s["embedding"], qv))
+    chosen = ranked[:k]
+
+    # Which block do the closest few hits agree on?
+    counts: dict[str, int] = {}
+    for s in ranked[:5]:
+        g = _group_key(s["section_id"])
+        counts[g] = counts.get(g, 0) + 1
+    group, hits = max(counts.items(), key=lambda kv: kv[1])
+    if hits >= 2:
+        block = [s for s in sections if _group_key(s["section_id"]) == group]
+        # Only expand tight blocks; big subparts aren't repeated-standard runs.
+        if len(block) <= TOC_EXPAND_GROUP_MAX:
+            block.sort(key=lambda s: _sort_key(s["section_id"]))
+            seen = {s["section_id"] for s in block}
+            extras = [s for s in ranked[:k] if s["section_id"] not in seen]
+            chosen = block + extras
+
     return [
         {
             "section_id": s["section_id"],
@@ -65,7 +112,7 @@ def navigate_toc(query: str, k: int = 6) -> list[dict]:
             "source": s["source"],
             "preview": " ".join(s["text"][:120].split()),
         }
-        for s in ranked
+        for s in chosen
     ]
 
 

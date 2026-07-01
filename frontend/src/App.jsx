@@ -6,12 +6,14 @@ import remarkGfm from 'remark-gfm'
 // (Router runs on cheaper Haiku, but its tokens are tiny — we approximate.)
 const PRICE = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
 
-const TIER_DESC = { A: '직답 (검색 없음)', B: '단일 섹션 조회', C: '다중 섹션 검색' }
+const TIER_DESC = { A: 'Direct answer (no retrieval)', B: 'Single-section lookup', C: 'Multi-section retrieval' }
 
 const EXAMPLES = [
-  { q: '이 봇은 무슨 일을 하나요?', tier: 'A' },
-  { q: '자가용 조종사 자격의 최소 나이는?', tier: 'B' },
-  { q: 'VFR 연료 예비 요구량은? 비행기와 회전익기를 비교해줘', tier: 'C' },
+  { q: 'What aeronautical experience is required for a private pilot certificate with an airplane single-engine rating?', tier: 'B' },
+  { q: 'Which medical conditions disqualify an applicant for a first-class airman medical certificate?', tier: 'C' },
+  { q: 'What are the fuel-reserve requirements for VFR flight, day versus night?', tier: 'B' },
+  { q: 'How do operating requirements differ between Class B and Class C airspace?', tier: 'C' },
+  { q: 'What must a pilot do before operating in an active restricted area?', tier: 'C' },
 ]
 
 // A compact, human-readable summary of a tool call's argument.
@@ -68,6 +70,26 @@ function costOf(u) {
   return { dollars, savingsPct, totalCtx }
 }
 
+// Regulation text extracted from the PDF is full of hard line-wraps, words
+// hyphenated across line breaks, and page header/footer noise. Clean it up and
+// split it into readable paragraphs at subsection markers like (a), (b), (1).
+function formatCitation(raw) {
+  const cleaned = (raw || '')
+    // stitch words hyphenated across a line break: "un-\nless" -> "unless"
+    .replace(/([A-Za-z])-\s*\n\s*([A-Za-z])/g, '$1$2')
+    // drop injected CFR page header/footer lines (e.g. "714 14 CFR Ch. I …")
+    .replace(/\s*\d{1,4}\s+14 CFR Ch\.[^\n]*/g, ' ')
+    // collapse the PDF's hard line-wraps into single spaces
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+  // break into paragraphs before each lettered/numbered subsection marker
+  return cleaned
+    .split(/\s+(?=\((?:[a-z]{1,3}|\d{1,2})\)\s)/g)
+    .map((p) => p.trim())
+    .filter(Boolean)
+}
+
 // ── Sub-components ───────────────────────────────────────────────
 
 function WorkingBanner({ text }) {
@@ -122,7 +144,7 @@ function CostPanel({ usage }) {
         <span className="io io-in">↓ input <b>{usage.input.toLocaleString()}</b> tok</span>
         <span className="io io-out">↑ output <b>{usage.output.toLocaleString()}</b> tok</span>
       </div>
-      <div className="cost-bar" title="전체 컨텍스트 구성 (billed input · cache read · cache write)">
+      <div className="cost-bar" title="Full context breakdown (billed input · cache read · cache write)">
         <span className="seg seg-in" style={{ width: pct(usage.input) }} />
         <span className="seg seg-read" style={{ width: pct(usage.cacheRead) }} />
         <span className="seg seg-write" style={{ width: pct(usage.cacheWrite) }} />
@@ -134,7 +156,7 @@ function CostPanel({ usage }) {
       </div>
       <div className="cost-summary">
         <span className="cost-dollar">≈ ${c.dollars.toFixed(5)}</span>
-        {c.savingsPct > 0 && <span className="cost-save">캐시로 {c.savingsPct}% 절감</span>}
+        {c.savingsPct > 0 && <span className="cost-save">{c.savingsPct}% saved via cache</span>}
         <span className="cost-ctx">📦 context {totalInput.toLocaleString()} tok</span>
       </div>
     </div>
@@ -151,7 +173,11 @@ function Sources({ citations, idx }) {
             <span className="source-tag">[{c.n}]</span> {c.source}
             <span className="source-chunk">#{c.chunk_index}</span>
           </summary>
-          <blockquote className="source-text">{c.text}</blockquote>
+          <blockquote className="source-text">
+            {formatCitation(c.text).map((p, k) => (
+              <p key={k}>{p}</p>
+            ))}
+          </blockquote>
         </details>
       ))}
     </div>
@@ -202,7 +228,7 @@ export default function App() {
         body: JSON.stringify({ message: question }),
         signal: controller.signal,
       })
-      if (!res.ok) throw new Error(`서버 오류 ${res.status}`)
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -257,10 +283,10 @@ export default function App() {
       }
     } catch (err) {
       if (err.name === 'AbortError') {
-        updateLast((last) => ({ status: '', text: last.text || '_(중단됨)_' }))
+        updateLast((last) => ({ status: '', text: last.text || '_(stopped)_' }))
       } else {
-        setError(err.message || '요청 실패')
-        updateLast(() => ({ status: '', error: err.message || '요청 실패' }))
+        setError(err.message || 'Request failed')
+        updateLast(() => ({ status: '', error: err.message || 'Request failed' }))
       }
     } finally {
       setBusy(false)
@@ -269,7 +295,8 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="layout">
+      <div className="app">
       <header className="app-header">
         <h1>RAG Chat</h1>
         <span className="app-sub">14 CFR · agentic retrieval</span>
@@ -278,15 +305,7 @@ export default function App() {
       <div className="messages">
         {messages.length === 0 && (
           <div className="empty">
-            <p className="empty-lead">항공 규정(14 CFR)에 대해 물어보세요. 아래 예시를 눌러 시작해도 됩니다:</p>
-            <div className="examples">
-              {EXAMPLES.map((ex, k) => (
-                <button key={k} className="example" onClick={() => send(ex.q)}>
-                  <span className={`tier-badge tier-badge-${ex.tier}`} title={TIER_DESC[ex.tier]}>{ex.tier}</span>
-                  <span>{ex.q}</span>
-                </button>
-              ))}
-            </div>
+            <p className="empty-lead">Ask about U.S. aviation regulations (14 CFR), or pick an example on the right to get started.</p>
           </div>
         )}
 
@@ -313,7 +332,7 @@ export default function App() {
 
               {m.role === 'assistant' && m.text && !m.status && (
                 <button className="copy-btn" onClick={() => navigator.clipboard?.writeText(m.text)}>
-                  답변 복사
+                  Copy answer
                 </button>
               )}
             </div>
@@ -328,7 +347,7 @@ export default function App() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="항공 규정에 대해 질문하세요..."
+          placeholder="Ask about aviation regulations..."
           autoFocus
           disabled={busy}
         />
@@ -340,6 +359,19 @@ export default function App() {
           <button type="submit">Send</button>
         )}
       </form>
+      </div>
+
+      <aside className="sidebar">
+        <div className="sidebar-title">Example questions</div>
+        <div className="examples">
+          {EXAMPLES.map((ex, k) => (
+            <button key={k} className="example" onClick={() => send(ex.q)} disabled={busy}>
+              <span className={`tier-badge tier-badge-${ex.tier}`} title={TIER_DESC[ex.tier]}>{ex.tier}</span>
+              <span>{ex.q}</span>
+            </button>
+          ))}
+        </div>
+      </aside>
     </div>
   )
 }

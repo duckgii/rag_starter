@@ -138,7 +138,7 @@ text you read through the tools. Call tools directly — no preamble or narratio
 Steps:
 1. navigate_toc(question) → find candidate sections.
 2. Pick the RIGHT one from the previews — many share a title (student, private, \
-commercial, ATP); match the certificate/rating in the question.
+commercial, ATP); match the ce2rtificate/rating in the question.
 3. read_section to read it in full.
 4. If the answer depends on a section it cites, follow_refs to list them, then \
 read_section the ones you need.
@@ -175,6 +175,17 @@ U.S. aviation regulations (14 CFR) with citations. The user's message does not \
 require looking anything up. Respond briefly and directly: greet them and explain \
 what you do if they're saying hello, or politely note that a question is outside \
 U.S. aviation regulations if it is."""
+
+
+# Injected as a final user nudge when the retrieval loop hits its iteration cap
+# with sections already read. A distributed answer (one that spans many sibling
+# sections) often can't be fully assembled within the budget, but what was read
+# usually supports a strong answer — so synthesize from it instead of giving up.
+SYNTHESIS_NUDGE = """You've reached the search budget — do NOT call any more \
+tools. Answer the question now using ONLY the sections you already read above, \
+citing each factual claim with its bracketed number. If some aspect of the \
+question isn't covered by what you read, note briefly that the answer may be \
+incomplete, then give the best answer the sections you did read support."""
 
 
 def classify(question: str, client) -> tuple[str, object]:
@@ -426,6 +437,32 @@ def run(question: str, client):
             })
         messages.append({"role": "user", "content": results})
 
+    # Budget exhausted. If we actually read sections, don't throw that context
+    # away — force one tool-free synthesis turn over everything read so far.
+    # (cite_list is populated only by read_section, so it's non-empty exactly
+    # when the model has full section text to answer from.)
+    if cite_list:
+        yield {"type": "status", "text": "✍️ Synthesizing from what was read…"}
+        last = messages[-1].get("content")
+        if isinstance(last, list):
+            last.append({"type": "text", "text": SYNTHESIS_NUDGE})
+        _cache_last(messages)  # keep the (now large) read context on cache
+        resp = yield from _stream_turn(
+            client,
+            model=MODEL,
+            max_tokens=2000,
+            system=[{"type": "text", "text": SYSTEM,
+                     "cache_control": {"type": "ephemeral"}}],
+            messages=messages,  # no tools → the model can only answer
+        )
+        add_usage(resp.usage)
+        yield usage_event(resp.usage)
+        answer = "".join(b.text for b in resp.content if b.type == "text")
+        yield {"type": "done", "citations": citations(answer),
+               "usage": done_usage()}
+        return
+
+    # Nothing was read — stay honest rather than inventing an answer.
     msg = ("I couldn't find enough in the corpus to answer confidently within the "
            "search budget.")
     yield {"type": "delta", "text": msg}

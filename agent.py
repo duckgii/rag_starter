@@ -196,8 +196,18 @@ Citations: read_section prefixes each section with a number like [3]. Cite every
 factual claim with that bracketed number (e.g. "40 hours [3]"). Never invent a \
 number or cite a section you only saw in navigate_toc or follow_refs.
 
-Format in clean Markdown: headings, **bold** terms, and lists for enumerated \
-requirements."""
+Write clean Markdown for a reader who may not know the jargon:
+- Define each abbreviation or term of art the first time it appears — e.g. \
+"VFR (visual flight rules)", "PIC (pilot in command)", "nautical mile (about \
+1.15 statute miles)".
+- Match the structure to the question: answer a single-fact question in a \
+sentence or two; use a bulleted or numbered list for enumerated requirements; \
+use a table only to compare two or more things. Don't force headings onto a \
+short answer.
+- Include only what the question asks. Lead with the direct answer, then \
+supporting detail — no restating the question, no filler, and don't pull in \
+parts of a section that aren't relevant.
+- Use **bold** for the key figures and terms the reader is looking for."""
 
 
 # Routes a question into one Adaptive-RAG tier. Kept tiny so the routing call is

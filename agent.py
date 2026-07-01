@@ -53,7 +53,7 @@ def _load():
 
 # ── Tool implementations ────────────────────────────────────────────
 
-def navigate_toc(query: str, k: int = 12) -> list[dict]:
+def navigate_toc(query: str, k: int = 6) -> list[dict]:
     """Rank sections by similarity of (title + opening) to the query."""
     sections, _ = _load()
     [qv] = embed([query])
@@ -63,7 +63,7 @@ def navigate_toc(query: str, k: int = 12) -> list[dict]:
             "section_id": s["section_id"],
             "title": s["title"],
             "source": s["source"],
-            "preview": " ".join(s["text"][:240].split()),
+            "preview": " ".join(s["text"][:120].split()),
         }
         for s in ranked
     ]
@@ -80,10 +80,9 @@ TOOLS = [
     {
         "name": "navigate_toc",
         "description": (
-            "Search the regulation table of contents and return candidate "
-            "sections (id, title, and a short preview) ranked by relevance. "
-            "Use this FIRST to locate which sections matter. It returns NO full "
-            "text — call read_section to actually read one."
+            "Search the regulation table of contents; returns candidate sections "
+            "(id, title, short preview) ranked by relevance. Use FIRST. No full "
+            "text — call read_section to read one."
         ),
         "input_schema": {
             "type": "object",
@@ -99,9 +98,8 @@ TOOLS = [
     {
         "name": "read_section",
         "description": (
-            "Read the FULL text of one section by its id (e.g. '61.109'). "
-            "Returns the section text and lists the other sections it "
-            "cross-references."
+            "Read one section's FULL text by id (e.g. '61.109'). Returns the text "
+            "and the sections it cross-references."
         ),
         "input_schema": {
             "type": "object",
@@ -117,9 +115,8 @@ TOOLS = [
     {
         "name": "follow_refs",
         "description": (
-            "Read the full text of every section cross-referenced by the given "
-            "section. Use after read_section when the answer depends on a "
-            "section the text points to (e.g. 'as listed in § 61.107(b)(1)')."
+            "List the sections a given section cross-references (id, title, "
+            "preview). No full text — call read_section on the ones you need."
         ),
         "input_schema": {
             "type": "object",
@@ -135,31 +132,25 @@ TOOLS = [
 ]
 
 
-SYSTEM = """You answer questions about U.S. aviation regulations (14 CFR) using \
-ONLY what you read through the tools. You cannot see any regulation text until \
-you read it.
+SYSTEM = """You answer U.S. aviation regulation (14 CFR) questions using ONLY \
+text you read through the tools. Call tools directly — no preamble or narration.
 
-Strategy:
-1. Call navigate_toc with the user's question to find candidate sections.
-2. Use the previews to pick the RIGHT one — many sections share a title (e.g. \
-several "Aeronautical experience" sections exist for student, private, \
-commercial, and ATP certificates). Match the certificate/rating in the question.
-3. Call read_section on it to read the full text.
-4. If the section's answer depends on another section it cites (e.g. "areas of \
-operation listed in § 61.107(b)(1)"), call follow_refs to read those too.
-5. Repeat as needed. Stop once you can answer — or, if the tools don't surface \
-the information, say the corpus doesn't contain it rather than guessing.
+Steps:
+1. navigate_toc(question) → find candidate sections.
+2. Pick the RIGHT one from the previews — many share a title (student, private, \
+commercial, ATP); match the certificate/rating in the question.
+3. read_section to read it in full.
+4. If the answer depends on a section it cites, follow_refs to list them, then \
+read_section the ones you need.
+Stop when you can answer. If the tools don't surface it, say the corpus doesn't \
+contain it — don't guess.
 
-Citation rules:
-- Every section returned by read_section / follow_refs is prefixed with a \
-number like [3]. Cite each factual claim with that bracketed number, placed \
-right after the claim, e.g. "at least 40 hours of flight time [3]".
-- Only use numbers that were shown to you. Never invent one or cite a section \
-you only saw in navigate_toc (you didn't read it).
-- If the sources don't answer the question, say so explicitly and don't fabricate.
+Citations: read_section prefixes each section with a number like [3]. Cite every \
+factual claim with that bracketed number (e.g. "40 hours [3]"). Never invent a \
+number or cite a section you only saw in navigate_toc or follow_refs.
 
-Format the answer in clean Markdown: headings, **bold** key terms, and bullet \
-or numbered lists for enumerated requirements."""
+Format in clean Markdown: headings, **bold** terms, and lists for enumerated \
+requirements."""
 
 
 # Routes a question into one Adaptive-RAG tier. Kept tiny so the routing call is
@@ -290,7 +281,19 @@ def run(question: str, client):
             refs = [r for r in find_section_refs(s["text"], s["section_id"]) if get_section(r)]
             if not refs:
                 return f"§ {s['section_id']} cites no other sections in this corpus."
-            return "\n\n———\n\n".join(render(get_section(r)) for r in refs)
+            # Return previews only (no full text, no citation number) and let the
+            # model read_section the ones it actually needs — this keeps the whole
+            # referenced corpus out of context unless it's truly required.
+            lines = []
+            for r in refs:
+                rs = get_section(r)
+                preview = " ".join(rs["text"][:240].split())
+                lines.append(f"§ {rs['section_id']} — {rs['title']}  ·  {preview}")
+            return (
+                f"§ {s['section_id']} cross-references these sections "
+                "(call read_section to read the full text of any you need):\n"
+                + "\n".join(lines)
+            )
         return f"Unknown tool: {name}"
 
     def citations(answer: str) -> list[dict]:

@@ -381,7 +381,7 @@ export default function App() {
         <div className="examples">
           {EXAMPLES.map((ex, k) => (
             <button key={k} className="example" onClick={() => send(ex.q)} disabled={busy}>
-              <span className={`tier-badge tier-badge-${ex.tier}`} title={TIER_DESC[ex.tier]}>{ex.tier}</span>
+              <span className="example-num">{k + 1}</span>
               <span>{ex.q}</span>
             </button>
           ))}

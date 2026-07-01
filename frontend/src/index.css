@@ -39,6 +39,20 @@ body {
   margin-bottom: 0.6rem;
 }
 .sidebar .example { width: 100%; }
+.example-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: #0066cc;
+  color: #fff;
+  font-family: ui-monospace, Menlo, monospace;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
 .example:disabled { opacity: 0.5; cursor: default; }
 .example:disabled:hover { border-color: #e5e5ea; background: #fff; }
 

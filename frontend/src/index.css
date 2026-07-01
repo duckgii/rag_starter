@@ -414,7 +414,21 @@ h1 {
 .source > summary::before { content: '▸ '; color: #999; }
 .source[open] > summary::before { content: '▾ '; }
 .source-tag { color: #0066cc; font-weight: 600; }
-.source-chunk { color: #aaa; margin-left: 0.4rem; }
+.source-sec { color: #0066cc; font-weight: 600; margin: 0 0.45rem; }
+.source-title {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #555;
+  font-size: 0.8rem;
+}
+.source-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  padding: 0.45rem 0.7rem 0.1rem;
+  font-size: 0.78rem;
+}
+.source-links a { color: #0066cc; text-decoration: none; font-weight: 500; }
+.source-links a:hover { text-decoration: underline; }
 .source-text {
   margin: 0;
   padding: 0.6rem 0.9rem;

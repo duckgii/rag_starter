@@ -90,6 +90,50 @@ function formatCitation(raw) {
     .filter(Boolean)
 }
 
+// Human-readable titles for the CFR parts in the corpus, so a citation reads
+// "14 CFR Part 61 — Certification: Pilots…" instead of a raw PDF filename.
+const PART_TITLES = {
+  1: 'Definitions and Abbreviations',
+  21: 'Certification Procedures for Products and Articles',
+  23: 'Airworthiness Standards: Normal Category Airplanes',
+  25: 'Airworthiness Standards: Transport Category Airplanes',
+  27: 'Airworthiness Standards: Normal Category Rotorcraft',
+  29: 'Airworthiness Standards: Transport Category Rotorcraft',
+  33: 'Airworthiness Standards: Aircraft Engines',
+  43: 'Maintenance, Preventive Maintenance, Rebuilding, and Alteration',
+  47: 'Aircraft Registration',
+  61: 'Certification: Pilots, Flight Instructors, and Ground Instructors',
+  67: 'Medical Standards and Certification',
+  71: 'Designation of Class A, B, C, D, and E Airspace Areas',
+  73: 'Special Use Airspace',
+  91: 'General Operating and Flight Rules',
+}
+
+// The indexed PDFs are govinfo granules — the filename IS the granule id, so we
+// can link straight back to the exact source document we quoted.
+function govinfoUrl(filename) {
+  if (!filename) return null
+  const base = filename.replace(/\.pdf$/i, '')
+  const pkg = (base.match(/^CFR-\d+-title\d+-vol\d+/) || [base])[0]
+  return `https://www.govinfo.gov/content/pkg/${pkg}/pdf/${base}.pdf`
+}
+
+// Derive display + link metadata for one citation from its section number and
+// source filename.
+function citeMeta(c) {
+  const sec = (c.chunk_index || '').replace(/[^0-9.]/g, '') // "§ 61.109" -> "61.109"
+  const part = sec.split('.')[0] || ''
+  const name = PART_TITLES[part]
+  return {
+    sec,
+    docTitle: name ? `14 CFR Part ${part} — ${name}` : part ? `14 CFR Part ${part}` : c.source,
+    // eCFR jumps straight to the section (current edition); govinfo is the exact
+    // 2025 source PDF we indexed.
+    ecfr: sec ? `https://www.ecfr.gov/current/title-14/section-${sec}` : null,
+    pdf: govinfoUrl(c.source),
+  }
+}
+
 // Assemble the full answer as copy-ready Markdown: the answer body (which
 // already carries [n] citation markers) followed by a Sources section listing
 // each cited section as a labeled blockquote.
@@ -98,8 +142,13 @@ function answerToMarkdown(m) {
   if (m.citations && m.citations.length > 0) {
     md += '\n\n---\n\n## Sources\n'
     for (const c of m.citations) {
+      const meta = citeMeta(c)
       const quoted = formatCitation(c.text).map((p) => `> ${p}`).join('\n>\n')
-      md += `\n**[${c.n}] ${c.chunk_index}** · ${c.source}\n\n${quoted}\n`
+      const links = [
+        meta.ecfr && `[${c.chunk_index} on eCFR](${meta.ecfr})`,
+        meta.pdf && `[Source PDF](${meta.pdf})`,
+      ].filter(Boolean).join(' · ')
+      md += `\n**[${c.n}] ${c.chunk_index}** — ${meta.docTitle}\n${links}\n\n${quoted}\n`
     }
   }
   return md
@@ -182,19 +231,35 @@ function Sources({ citations, idx }) {
   return (
     <div className="sources">
       <div className="sources-label">Sources</div>
-      {citations.map((c) => (
-        <details key={c.n} id={`cite-${idx}-${c.n}`} className="source">
-          <summary>
-            <span className="source-tag">[{c.n}]</span> {c.source}
-            <span className="source-chunk">#{c.chunk_index}</span>
-          </summary>
-          <blockquote className="source-text">
-            {formatCitation(c.text).map((p, k) => (
-              <p key={k}>{p}</p>
-            ))}
-          </blockquote>
-        </details>
-      ))}
+      {citations.map((c) => {
+        const meta = citeMeta(c)
+        return (
+          <details key={c.n} id={`cite-${idx}-${c.n}`} className="source">
+            <summary>
+              <span className="source-tag">[{c.n}]</span>
+              <span className="source-sec">{c.chunk_index}</span>
+              <span className="source-title">{meta.docTitle}</span>
+            </summary>
+            <div className="source-links">
+              {meta.ecfr && (
+                <a href={meta.ecfr} target="_blank" rel="noreferrer">
+                  Read {c.chunk_index} on eCFR ↗
+                </a>
+              )}
+              {meta.pdf && (
+                <a href={meta.pdf} target="_blank" rel="noreferrer">
+                  Source PDF ↗
+                </a>
+              )}
+            </div>
+            <blockquote className="source-text">
+              {formatCitation(c.text).map((p, k) => (
+                <p key={k}>{p}</p>
+              ))}
+            </blockquote>
+          </details>
+        )
+      })}
     </div>
   )
 }

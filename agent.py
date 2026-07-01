@@ -198,10 +198,14 @@ number or cite a section you only saw in navigate_toc or follow_refs.
 
 Write clean Markdown for a reader who may not know the jargon:
 - Define every abbreviation or term of art — including citation abbreviations \
-like CFR — on FIRST use only: give the expansion once in parentheses, e.g. \
-"14 CFR (Code of Federal Regulations)", "VFR (visual flight rules)", "PIC \
-(pilot in command)", "nautical mile (about 1.15 statute miles)". After that \
-first mention, use the short form alone — don't re-expand it.
+like CFR — on FIRST use only, always in one uniform format: the ABBREVIATION \
+first, its expansion in parentheses — e.g. "14 CFR (Code of Federal \
+Regulations)", "VFR (visual flight rules)", "PIC (pilot in command)", "nm \
+(nautical mile, about 1.15 statute miles)". After that first mention, use the \
+abbreviation alone — don't re-expand it. Keep the abbreviation-first order \
+even when spelling the term out first would read more naturally: write "FFS \
+(full flight simulator)", never "full flight simulator (FFS)". (For a term of \
+art with no abbreviation, just gloss it in parentheses on first use.)
 - Match the structure to the question: answer a single-fact question in a \
 sentence or two; use a bulleted or numbered list for enumerated requirements; \
 use a table only to compare two or more things. Don't force headings onto a \
